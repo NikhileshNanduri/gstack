@@ -149,6 +149,7 @@ export const E2E_TOUCHFILES: Record<string, string[]> = {
   // confirm" plan write. runPlanSkillFloorCheck cannot detect that shape
   // (it exits on first AUQ); runPlanSkillCounting can.
   'plan-eng-multi-finding-batching': ['plan-eng-review/**', 'scripts/resolvers/preamble.ts', 'scripts/resolvers/preamble/generate-ask-user-format.ts', 'scripts/resolvers/preamble/generate-completion-status.ts', 'scripts/resolvers/review.ts', 'test/helpers/claude-pty-runner.ts', 'test/fixtures/forcing-finding-seeds.ts', 'test/skill-e2e-plan-eng-multi-finding-batching.test.ts'],
+  'plan-ceo-split-overflow': ['plan-ceo-review/**', 'scripts/resolvers/preamble.ts', 'scripts/resolvers/preamble/generate-ask-user-format.ts', 'bin/gstack-question-preference', 'test/helpers/claude-pty-runner.ts', 'test/fixtures/forcing-finding-seeds.ts', 'test/skill-e2e-plan-ceo-split-overflow.test.ts'],
   'brain-privacy-gate':           ['scripts/resolvers/preamble/generate-brain-sync-block.ts', 'scripts/resolvers/preamble.ts', 'bin/gstack-brain-sync', 'bin/gstack-artifacts-init', 'bin/gstack-config', 'test/helpers/agent-sdk-runner.ts'],
 
   // /setup-gbrain Path 4 (Remote MCP) — happy + bad-token end-to-end via
@@ -157,6 +158,11 @@ export const E2E_TOUCHFILES: Record<string, string[]> = {
   // or the detect script changes.
   'setup-gbrain-remote':          ['setup-gbrain/SKILL.md.tmpl', 'bin/gstack-gbrain-mcp-verify', 'bin/gstack-artifacts-init', 'bin/gstack-gbrain-detect', 'test/helpers/agent-sdk-runner.ts'],
   'setup-gbrain-bad-token':       ['setup-gbrain/SKILL.md.tmpl', 'bin/gstack-gbrain-mcp-verify', 'test/helpers/agent-sdk-runner.ts'],
+  // v1.34.0.0 split-engine Path 4 + Step 4.5 Yes (local PGLite for code).
+  // Periodic-tier per codex #12 (AgentSDK harness is non-deterministic).
+  // Fires when the setup-gbrain template, install/verify/init helpers, or
+  // the agent-sdk-runner harness changes.
+  'setup-gbrain-path4-local-pglite': ['setup-gbrain/SKILL.md.tmpl', 'bin/gstack-gbrain-mcp-verify', 'bin/gstack-gbrain-install', 'bin/gstack-gbrain-detect', 'lib/gbrain-local-status.ts', 'test/helpers/agent-sdk-runner.ts'],
 
   // AskUserQuestion format regression (RECOMMENDATION + Completeness: N/10)
   // Fires when either template OR the two preamble resolvers change.
@@ -355,6 +361,23 @@ export const E2E_TOUCHFILES: Record<string, string[]> = {
     'test/helpers/agent-sdk-runner.ts',
     'scripts/resolvers/model-overlay.ts',
   ],
+
+  // /ios-qa — agent flow E2E. Daemon + stub StateServer + codegen
+  // exercised end-to-end. The no-device path is gate-tier; the with-device
+  // path requires GSTACK_HAS_IOS_DEVICE=1 and is periodic-tier.
+  'ios-qa-e2e':       ['ios-qa/**', 'ios-fix/**', 'ios-design-review/**', 'ios-clean/**', 'ios-sync/**', 'test/skill-e2e-ios.test.ts'],
+  // Swift-build invariant test — requires the Swift toolchain. Compiles the
+  // fixture SPM package + runs the XCTest suite that validates the real
+  // Swift StateServer implementation (loopback bind, boot token rotation,
+  // session lock). Periodic-tier — Swift build is heavier than TS unit tests.
+  'ios-qa-swift-build': ['ios-qa/templates/**', 'test/fixtures/ios-qa/FixtureApp/**', 'test/skill-e2e-ios-swift-build.test.ts'],
+  // Real-device path — only runs with GSTACK_HAS_IOS_DEVICE=1 + a paired
+  // iPhone. Validates the CoreDevice agent + iOS SDK toolchain. Periodic-tier.
+  'ios-qa-device':    ['ios-qa/templates/**', 'test/fixtures/ios-qa/FixtureApp/**', 'test/skill-e2e-ios-device.test.ts'],
+
+  // /spec end-to-end via PTY — exercises the full Phase 1→5 pipeline
+  // including --execute spawn. Periodic-tier — paid + non-deterministic.
+  'spec-execute':     ['spec/**', 'test/skill-e2e-spec-execute.test.ts'],
 };
 
 /**
@@ -457,6 +480,7 @@ export const E2E_TIERS: Record<string, 'gate' | 'periodic'> = {
   'plan-design-finding-floor': 'gate',
   'plan-devex-finding-floor':  'gate',
   'plan-eng-multi-finding-batching': 'periodic',
+  'plan-ceo-split-overflow': 'periodic',
 
   // Privacy gate for gstack-brain-sync — periodic (non-deterministic LLM call,
   // costs ~$0.30-$0.50 per run, not needed on every commit)
@@ -471,6 +495,7 @@ export const E2E_TIERS: Record<string, 'gate' | 'periodic'> = {
   // model's behavior against a stub MCP server.
   'setup-gbrain-remote': 'periodic',
   'setup-gbrain-bad-token': 'periodic',
+  'setup-gbrain-path4-local-pglite': 'periodic',
 
   // AskUserQuestion format regression — periodic (Opus 4.7 non-deterministic benchmark)
   'plan-ceo-review-format-mode': 'periodic',
@@ -620,6 +645,16 @@ export const E2E_TIERS: Record<string, 'gate' | 'periodic'> = {
   // Overlay efficacy harness (SDK, paid) — periodic only
   'overlay-harness-opus-4-7-fanout-toy': 'periodic',
   'overlay-harness-opus-4-7-fanout-realistic': 'periodic',
+
+  // /ios-qa daemon + codegen — no-device path runs every PR (no hardware
+  // dependency, deterministic). with-device path requires GSTACK_HAS_IOS_DEVICE.
+  'ios-qa-e2e': 'gate',
+  // Swift toolchain only, no device required, but heavier than TS unit tests.
+  'ios-qa-swift-build': 'periodic',
+  // Requires a real connected + paired iPhone. Manual-trigger only.
+  'ios-qa-device': 'periodic',
+  // /spec end-to-end PTY pipeline (paid, non-deterministic — periodic-tier).
+  'spec-execute': 'periodic',
 };
 
 /**
@@ -644,6 +679,9 @@ export const LLM_JUDGE_TOUCHFILES: Record<string, string[]> = {
   // Plan Reviews
   'plan-ceo-review/SKILL.md modes':       ['plan-ceo-review/SKILL.md', 'plan-ceo-review/SKILL.md.tmpl'],
   'plan-eng-review/SKILL.md sections':    ['plan-eng-review/SKILL.md', 'plan-eng-review/SKILL.md.tmpl'],
+
+  // /spec authored-spec quality (paid LLM-judge — periodic-tier).
+  'spec authored quality':                ['spec/SKILL.md', 'spec/SKILL.md.tmpl', 'test/fixtures/spec/**'],
   'plan-design-review/SKILL.md passes':   ['plan-design-review/SKILL.md', 'plan-design-review/SKILL.md.tmpl'],
 
   // Design skills

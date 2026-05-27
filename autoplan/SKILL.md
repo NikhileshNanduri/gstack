@@ -2,16 +2,7 @@
 name: autoplan
 preamble-tier: 3
 version: 1.0.0
-description: |
-  Auto-review pipeline — reads the full CEO, design, eng, and DX review skills from disk
-  and runs them sequentially with auto-decisions using 6 decision principles. Surfaces
-  taste decisions (close approaches, borderline scope, codex disagreements) at a final
-  approval gate. One command, fully reviewed plan out.
-  Use when asked to "auto review", "autoplan", "run all reviews", "review this plan
-  automatically", or "make the decisions for me".
-  Proactively suggest when the user has a plan file and wants to run the full review
-  gauntlet without answering 15-30 intermediate questions. (gstack)
-  Voice triggers (speech-to-text aliases): "auto plan", "automatic review".
+description: Auto-review pipeline — reads the full CEO, design, eng, and DX review skills from disk and runs them sequentially with auto-decisions using 6 decision principles. (gstack)
 benefits-from: [office-hours]
 triggers:
   - run all reviews
@@ -29,6 +20,19 @@ allowed-tools:
 ---
 <!-- AUTO-GENERATED from SKILL.md.tmpl — do not edit directly -->
 <!-- Regenerate: bun run gen:skill-docs -->
+
+
+## When to invoke this skill
+
+Surfaces
+taste decisions (close approaches, borderline scope, codex disagreements) at a final
+approval gate. One command, fully reviewed plan out.
+Use when asked to "auto review", "autoplan", "run all reviews", "review this plan
+automatically", or "make the decisions for me".
+Proactively suggest when the user has a plan file and wants to run the full review
+gauntlet without answering 15-30 intermediate questions.
+
+Voice triggers (speech-to-text aliases): "auto plan", "automatic review".
 
 ## Preamble (run first)
 
@@ -107,6 +111,19 @@ _CHECKPOINT_MODE=$(~/.claude/skills/gstack/bin/gstack-config get checkpoint_mode
 _CHECKPOINT_PUSH=$(~/.claude/skills/gstack/bin/gstack-config get checkpoint_push 2>/dev/null || echo "false")
 echo "CHECKPOINT_MODE: $_CHECKPOINT_MODE"
 echo "CHECKPOINT_PUSH: $_CHECKPOINT_PUSH"
+# Plan-mode hint for skills like /spec that branch behavior on plan-mode state.
+# Claude Code exposes plan mode via system reminders; we detect best-effort
+# from CLAUDE_PLAN_FILE (set by the harness when plan mode is active) and
+# fall back to "inactive". Codex hosts and Claude execution mode both end up
+# inactive, which is the safe default (defaults to file+execute pipeline).
+if [ -n "${CLAUDE_PLAN_FILE:-}${GSTACK_PLAN_MODE_FORCE:-}" ]; then
+  export GSTACK_PLAN_MODE="active"
+elif [ "${GSTACK_PLAN_MODE:-}" = "active" ]; then
+  export GSTACK_PLAN_MODE="active"
+else
+  export GSTACK_PLAN_MODE="inactive"
+fi
+echo "GSTACK_PLAN_MODE: $GSTACK_PLAN_MODE"
 [ -n "$OPENCLAW_SESSION" ] && echo "SPAWNED_SESSION: true" || true
 ```
 
@@ -238,6 +255,7 @@ Key routing rules:
 - Ship/deploy/PR → invoke /ship or /land-and-deploy
 - Save progress → invoke /context-save
 - Resume context → invoke /context-restore
+- Author a backlog-ready spec/issue → invoke /spec
 ```
 
 Then commit the change: `git add CLAUDE.md && git commit -m "chore: add gstack skill routing rules to CLAUDE.md"`
@@ -324,7 +342,36 @@ Effort both-scales: when an option involves effort, label both human-team and CC
 
 Net line closes the tradeoff. Per-skill instructions may add stricter rules.
 
-12. **Non-ASCII characters — write directly, never \u-escape.** When any
+### Handling 5+ options — split, never drop
+
+AskUserQuestion caps every call at **4 options**. With 5+ real options, NEVER
+drop, merge, or silently defer one to fit. Pick a compliant shape:
+
+- **Batch into ≤4-groups** — for coherent alternatives (e.g. version bumps,
+  layout variants). One call, 5th surfaced only if first 4 don't fit.
+- **Split per-option** — for independent scope items (e.g. "ship E1..E6?").
+  Fire N sequential calls, one per option. Default to this when unsure.
+
+Per-option call shape: `D<N>.k` header (e.g. D3.1..D3.5), ELI10 per option,
+Recommendation, kind-note (no completeness score — Include/Defer/Cut/Hold are
+decision actions), and 4 buckets:
+**A) Include**, **B) Defer**, **C) Cut**, **D) Hold** (stop chain, discuss).
+
+After the chain, fire `D<N>.final` to validate the assembled set (reprompt
+dependency conflicts) and confirm shipping it. Use `D<N>.revise-<k>` to
+revise one option without re-running the chain.
+
+For N>6, fire a `D<N>.0` meta-AskUserQuestion first (proceed / narrow / batch).
+
+question_ids for split chains: `<skill>-split-<option-slug>` (kebab-case ASCII,
+≤64 chars, `-2`/`-3` suffix on collision). The runtime checker
+(`bin/gstack-question-preference`) refuses `never-ask` on any `*-split-*` id,
+so split chains are never AUTO_DECIDE-eligible — the user's option set is sacred.
+
+**Full rule + worked examples + Hold/dependency semantics:** see
+`docs/askuserquestion-split.md` in the gstack repo. Read on demand when N>4.
+
+**Non-ASCII characters — write directly, never \u-escape.** When any
     string field (question, option label, option description) contains
     Chinese (繁體/簡體), Japanese, Korean, or other non-ASCII text, emit
     the literal UTF-8 characters in the JSON string. **Never escape them
@@ -357,6 +404,9 @@ Before calling AskUserQuestion, verify:
 - [ ] Net line closes the decision
 - [ ] You are calling the tool, not writing prose
 - [ ] Non-ASCII characters (CJK / accents) written directly, NOT \u-escaped
+- [ ] If you had 5+ options, you split (or batched into ≤4-groups) — did NOT drop any
+- [ ] If you split, you checked dependencies between options before firing the chain
+- [ ] If a per-option Hold fires, you stopped the chain immediately (didn't queue)
 
 
 ## Artifacts Sync (skill start)
@@ -556,84 +606,7 @@ Applies to AskUserQuestion, user replies, and findings. AskUserQuestion Format i
 - User-turn override wins: if the current message asks for terse / no explanations / just the answer, skip this section.
 - Terse mode (EXPLAIN_LEVEL: terse): no glosses, no outcome-framing layer, shorter responses.
 
-Jargon list, gloss on first use if the term appears:
-- idempotent
-- idempotency
-- race condition
-- deadlock
-- cyclomatic complexity
-- N+1
-- N+1 query
-- backpressure
-- memoization
-- eventual consistency
-- CAP theorem
-- CORS
-- CSRF
-- XSS
-- SQL injection
-- prompt injection
-- DDoS
-- rate limit
-- throttle
-- circuit breaker
-- load balancer
-- reverse proxy
-- SSR
-- CSR
-- hydration
-- tree-shaking
-- bundle splitting
-- code splitting
-- hot reload
-- tombstone
-- soft delete
-- cascade delete
-- foreign key
-- composite index
-- covering index
-- OLTP
-- OLAP
-- sharding
-- replication lag
-- quorum
-- two-phase commit
-- saga
-- outbox pattern
-- inbox pattern
-- optimistic locking
-- pessimistic locking
-- thundering herd
-- cache stampede
-- bloom filter
-- consistent hashing
-- virtual DOM
-- reconciliation
-- closure
-- hoisting
-- tail call
-- GIL
-- zero-copy
-- mmap
-- cold start
-- warm start
-- green-blue deploy
-- canary deploy
-- feature flag
-- kill switch
-- dead letter queue
-- fan-out
-- fan-in
-- debounce
-- throttle (UI)
-- hydration mismatch
-- memory leak
-- GC pause
-- heap fragmentation
-- stack overflow
-- null pointer
-- dangling pointer
-- buffer overflow
+Curated jargon list lives at `~/.claude/skills/gstack/scripts/jargon-list.json` (80+ terms). On the first jargon term you encounter this session, Read that file once; treat the `terms` array as the canonical list. The list is repo-owned and may grow between releases.
 
 
 ## Completeness Principle — Boil the Lake
@@ -766,9 +739,7 @@ Replace `SKILL_NAME`, `OUTCOME`, and `USED_BROWSE` before running.
 
 ## Plan Status Footer
 
-In plan mode before ExitPlanMode: if the plan file lacks `## GSTACK REVIEW REPORT`, run `~/.claude/skills/gstack/bin/gstack-review-read` and append the standard runs/status/findings table. With `NO_REVIEWS` or empty, append a 5-row placeholder with verdict "NO REVIEWS YET — run `/autoplan`". If a richer report exists, skip.
-
-PLAN MODE EXCEPTION — always allowed (it's the plan file).
+Skills that run plan reviews (`/plan-*-review`, `/codex review`) include the EXIT PLAN MODE GATE blocking checklist at the end of the skill, which verifies the plan file ends with `## GSTACK REVIEW REPORT` before ExitPlanMode is called. Skills that don't run plan reviews (operational skills like `/ship`, `/qa`, `/review`) typically don't operate in plan mode and have no review report to verify; this footer is a no-op for them. Writing the plan file is the one edit allowed in plan mode.
 
 ## Step 0: Detect platform and base branch
 
@@ -1067,26 +1038,22 @@ Loaded review skills from disk. Starting full review pipeline with auto-decision
 ## Phase 0.5: Codex auth + version preflight
 
 Before invoking any Codex voice, preflight the CLI: verify auth (multi-signal) and
-warn on known-bad CLI versions. This is infrastructure for all 4 phases below —
-source it once here and the helper functions stay in scope for the rest of the
-workflow.
+warn on known-bad CLI versions. Standalone probe binaries handle auth, version
+checks, and telemetry — no `source` needed, no security hook triggers.
 
 ```bash
-_TEL=$(~/.claude/skills/gstack/bin/gstack-config get telemetry 2>/dev/null || echo off)
-source ~/.claude/skills/gstack/bin/gstack-codex-probe
-
 # Check Codex binary. If missing, tag the degradation matrix and continue
 # with Claude subagent only (autoplan's existing degradation fallback).
 if ! command -v codex >/dev/null 2>&1; then
-  _gstack_codex_log_event "codex_cli_missing"
+  ~/.claude/skills/gstack/bin/gstack-codex-log-event "codex_cli_missing"
   echo "[codex-unavailable: binary not found] — proceeding with Claude subagent only"
   _CODEX_AVAILABLE=false
-elif ! _gstack_codex_auth_probe >/dev/null; then
-  _gstack_codex_log_event "codex_auth_failed"
+elif ! ~/.claude/skills/gstack/bin/gstack-codex-auth-probe >/dev/null; then
+  ~/.claude/skills/gstack/bin/gstack-codex-log-event "codex_auth_failed"
   echo "[codex-unavailable: auth missing] — proceeding with Claude subagent only. Run \`codex login\` or set \$CODEX_API_KEY to enable dual-voice review."
   _CODEX_AVAILABLE=false
 else
-  _gstack_codex_version_check   # non-blocking warn if known-bad
+  ~/.claude/skills/gstack/bin/gstack-codex-version-check   # non-blocking warn if known-bad
   _CODEX_AVAILABLE=true
 fi
 ```
@@ -1120,7 +1087,7 @@ Override: every AskUserQuestion → auto-decide using the 6 principles.
   **Codex CEO voice** (via Bash):
   ```bash
   _REPO_ROOT=$(git rev-parse --show-toplevel) || { echo "ERROR: not in a git repo" >&2; exit 1; }
-  _gstack_codex_timeout_wrapper 600 codex exec "IMPORTANT: Do NOT read or execute any SKILL.md files or files in skill definition directories (paths containing skills/gstack). These are AI assistant skill definitions meant for a different system. Stay focused on repository code only.
+  ~/.claude/skills/gstack/bin/gstack-codex-timeout-wrapper 600 codex exec"IMPORTANT: Do NOT read or execute any SKILL.md files or files in skill definition directories (paths containing skills/gstack). These are AI assistant skill definitions meant for a different system. Stay focused on repository code only.
 
   You are a CEO/founder advisor reviewing a development plan.
   Challenge the strategic foundations: Are the premises valid or assumed? Is this the
@@ -1131,8 +1098,8 @@ Override: every AskUserQuestion → auto-decide using the 6 principles.
   File: <plan_path>" -C "$_REPO_ROOT" -s read-only --enable web_search_cached < /dev/null
   _CODEX_EXIT=$?
   if [ "$_CODEX_EXIT" = "124" ]; then
-    _gstack_codex_log_event "codex_timeout" "600"
-    _gstack_codex_log_hang "autoplan" "0"
+    ~/.claude/skills/gstack/bin/gstack-codex-log-event "codex_timeout" "600"
+    ~/.claude/skills/gstack/bin/gstack-codex-log-hang "autoplan" "0"
     echo "[codex stalled past 10 minutes — tagging as [codex-unavailable] for this phase and proceeding with Claude subagent only]"
   fi
   ```
@@ -1237,7 +1204,7 @@ Override: every AskUserQuestion → auto-decide using the 6 principles.
   **Codex design voice** (via Bash):
   ```bash
   _REPO_ROOT=$(git rev-parse --show-toplevel) || { echo "ERROR: not in a git repo" >&2; exit 1; }
-  _gstack_codex_timeout_wrapper 600 codex exec "IMPORTANT: Do NOT read or execute any SKILL.md files or files in skill definition directories (paths containing skills/gstack). These are AI assistant skill definitions meant for a different system. Stay focused on repository code only.
+  ~/.claude/skills/gstack/bin/gstack-codex-timeout-wrapper 600 codex exec"IMPORTANT: Do NOT read or execute any SKILL.md files or files in skill definition directories (paths containing skills/gstack). These are AI assistant skill definitions meant for a different system. Stay focused on repository code only.
 
   Read the plan file at <plan_path>. Evaluate this plan's
   UI/UX design decisions.
@@ -1254,8 +1221,8 @@ Override: every AskUserQuestion → auto-decide using the 6 principles.
   Be opinionated. No hedging." -C "$_REPO_ROOT" -s read-only --enable web_search_cached < /dev/null
   _CODEX_EXIT=$?
   if [ "$_CODEX_EXIT" = "124" ]; then
-    _gstack_codex_log_event "codex_timeout" "600"
-    _gstack_codex_log_hang "autoplan" "0"
+    ~/.claude/skills/gstack/bin/gstack-codex-log-event "codex_timeout" "600"
+    ~/.claude/skills/gstack/bin/gstack-codex-log-hang "autoplan" "0"
     echo "[codex stalled past 10 minutes — tagging as [codex-unavailable] for this phase and proceeding with Claude subagent only]"
   fi
   ```
@@ -1318,7 +1285,7 @@ Override: every AskUserQuestion → auto-decide using the 6 principles.
   **Codex eng voice** (via Bash):
   ```bash
   _REPO_ROOT=$(git rev-parse --show-toplevel) || { echo "ERROR: not in a git repo" >&2; exit 1; }
-  _gstack_codex_timeout_wrapper 600 codex exec "IMPORTANT: Do NOT read or execute any SKILL.md files or files in skill definition directories (paths containing skills/gstack). These are AI assistant skill definitions meant for a different system. Stay focused on repository code only.
+  ~/.claude/skills/gstack/bin/gstack-codex-timeout-wrapper 600 codex exec"IMPORTANT: Do NOT read or execute any SKILL.md files or files in skill definition directories (paths containing skills/gstack). These are AI assistant skill definitions meant for a different system. Stay focused on repository code only.
 
   Review this plan for architectural issues, missing edge cases,
   and hidden complexity. Be adversarial.
@@ -1330,8 +1297,8 @@ Override: every AskUserQuestion → auto-decide using the 6 principles.
   File: <plan_path>" -C "$_REPO_ROOT" -s read-only --enable web_search_cached < /dev/null
   _CODEX_EXIT=$?
   if [ "$_CODEX_EXIT" = "124" ]; then
-    _gstack_codex_log_event "codex_timeout" "600"
-    _gstack_codex_log_hang "autoplan" "0"
+    ~/.claude/skills/gstack/bin/gstack-codex-log-event "codex_timeout" "600"
+    ~/.claude/skills/gstack/bin/gstack-codex-log-hang "autoplan" "0"
     echo "[codex stalled past 10 minutes — tagging as [codex-unavailable] for this phase and proceeding with Claude subagent only]"
   fi
   ```
@@ -1439,7 +1406,7 @@ Log: "Phase 3.5 skipped — no developer-facing scope detected."
   **Codex DX voice** (via Bash):
   ```bash
   _REPO_ROOT=$(git rev-parse --show-toplevel) || { echo "ERROR: not in a git repo" >&2; exit 1; }
-  _gstack_codex_timeout_wrapper 600 codex exec "IMPORTANT: Do NOT read or execute any SKILL.md files or files in skill definition directories (paths containing skills/gstack). These are AI assistant skill definitions meant for a different system. Stay focused on repository code only.
+  ~/.claude/skills/gstack/bin/gstack-codex-timeout-wrapper 600 codex exec"IMPORTANT: Do NOT read or execute any SKILL.md files or files in skill definition directories (paths containing skills/gstack). These are AI assistant skill definitions meant for a different system. Stay focused on repository code only.
 
   Read the plan file at <plan_path>. Evaluate this plan's developer experience.
 
@@ -1456,8 +1423,8 @@ Log: "Phase 3.5 skipped — no developer-facing scope detected."
   Be adversarial. Think like a developer who is evaluating this against 3 competitors." -C "$_REPO_ROOT" -s read-only --enable web_search_cached < /dev/null
   _CODEX_EXIT=$?
   if [ "$_CODEX_EXIT" = "124" ]; then
-    _gstack_codex_log_event "codex_timeout" "600"
-    _gstack_codex_log_hang "autoplan" "0"
+    ~/.claude/skills/gstack/bin/gstack-codex-log-event "codex_timeout" "600"
+    ~/.claude/skills/gstack/bin/gstack-codex-log-hang "autoplan" "0"
     echo "[codex stalled past 10 minutes — tagging as [codex-unavailable] for this phase and proceeding with Claude subagent only]"
   fi
   ```
@@ -1599,6 +1566,81 @@ noting which items are incomplete. Do not loop indefinitely.
 
 ## Phase 4: Final Approval Gate
 
+## Implementation Tasks aggregator
+
+Before rendering the Final Approval Gate output block below, aggregate the
+per-phase task lists each review skill wrote.
+
+```bash
+eval "$(~/.claude/skills/gstack/bin/gstack-slug 2>/dev/null)"
+TASKS_DIR="${HOME}/.gstack/projects/${SLUG:-unknown}"
+BRANCH=$(git branch --show-current 2>/dev/null || echo unknown)
+# Commit window: last 5 commits on this branch. Drops stale standalone reviews.
+COMMITS_RECENT=$(git log --format=%H -n 5 2>/dev/null | tr '\n' '|' | sed 's/|$//')
+
+AGGREGATED_TASKS=""
+if command -v jq >/dev/null 2>&1; then
+  # Collect entries from all 4 phases, scoped to current branch + commit window.
+  # For each phase, keep only the latest run_id. Within the surviving set,
+  # dedupe by (component, sorted(files), title) — exact match only.
+  # Sort by priority (P1 > P2 > P3) then by phase order.
+  ALL_JSONL=$(mktemp -t autoplan-tasks.XXXXXXXX)
+  for phase in ceo-review design-review eng-review devex-review; do
+    # Use find instead of glob expansion — zsh nomatch errors otherwise when
+    # a phase produced no JSONL files. Sorting by name keeps the order stable.
+    while IFS= read -r f; do
+      [ -f "$f" ] || continue
+      # Filter to current branch + recent commits, then keep records for the
+      # latest run_id only. (Single phase may have multiple files if the user
+      # re-ran the review; aggregator takes the newest.)
+      jq -c --arg branch "$BRANCH" --arg commits "$COMMITS_RECENT" \
+        'select(.branch == $branch and ($commits | split("|") | index(.commit) != null))' \
+        "$f" 2>/dev/null >> "$ALL_JSONL" || true
+    done < <(find "$TASKS_DIR" -maxdepth 1 -name "tasks-$phase-*.jsonl" 2>/dev/null | sort)
+    # Reduce to latest run_id per phase
+    if [ -s "$ALL_JSONL" ]; then
+      jq -sc --arg phase "$phase" \
+        '[.[] | select(.phase == $phase)] | (max_by(.run_id) // null) as $latest_run | if $latest_run then map(select(.run_id == $latest_run.run_id)) else [] end | .[]' \
+        "$ALL_JSONL" > "$ALL_JSONL.phase" 2>/dev/null || true
+      # Replace with reduced version for this phase, accumulating others
+      jq -c --arg phase "$phase" 'select(.phase != $phase)' "$ALL_JSONL" > "$ALL_JSONL.other" 2>/dev/null || true
+      cat "$ALL_JSONL.other" "$ALL_JSONL.phase" > "$ALL_JSONL"
+      rm -f "$ALL_JSONL.phase" "$ALL_JSONL.other"
+    fi
+  done
+
+  # Exact-match dedup by (component, sorted(files), title). Non-matches kept
+  # separately with a possible-duplicate marker injected by the renderer.
+  AGGREGATED_TASKS=$(jq -s \
+    'group_by([.component, (.files | sort), .title])
+     | map(
+         # Take the highest-priority entry per group; tie-break by phase order
+         sort_by({P1:0,P2:1,P3:2}[.priority] // 99, {"ceo-review":0,"design-review":1,"eng-review":2,"devex-review":3}[.phase] // 99) | .[0]
+       )
+     | sort_by({P1:0,P2:1,P3:2}[.priority] // 99, {"ceo-review":0,"design-review":1,"eng-review":2,"devex-review":3}[.phase] // 99)
+     | if length == 0 then "_No actionable tasks emitted from any phase._" else
+         map("- [ ] **\(.id) (\(.priority), human: \(.effort_human) / CC: \(.effort_cc)) — \(.component)** — \(.title)\n  - Surfaced by: \(.phase) — \(.source_finding)\n  - Files: \(.files | join(", "))") | join("\n")
+       end' "$ALL_JSONL" 2>/dev/null | sed 's/^"//;s/"$//;s/\\n/\n/g')
+  rm -f "$ALL_JSONL"
+else
+  AGGREGATED_TASKS="_jq not installed — install jq to aggregate per-phase task lists. Skipping._"
+fi
+```
+
+Inside the Final Approval Gate output template below, render the aggregated
+markdown in the `### Implementation Tasks (aggregated across phases)` section.
+Substitute the contents of `$AGGREGATED_TASKS` (the bash variable set above)
+before printing the message to the user. This is NOT a template placeholder
+— the agent does the substitution at runtime, not gen-skill-docs at build time.
+
+If `$AGGREGATED_TASKS` is empty (no JSONL files found — none of the review
+skills ran in this session), render:
+
+`_No per-phase task lists found in $TASKS_DIR for branch $BRANCH. Each review
+skill writes its own; if you ran one of them but no list appears here, check
+that jq is installed and the tasks-<phase>-*.jsonl files exist._`
+
+
 **STOP here and present the final state to the user.**
 
 Present as a message, then use AskUserQuestion:
@@ -1649,6 +1691,10 @@ I recommend [X] — [principle]. But [Y] is also viable:
 
 ### Deferred to TODOS.md
 [Items auto-deferred with reasons]
+
+### Implementation Tasks (aggregated across phases)
+[Substitute the contents of $AGGREGATED_TASKS computed above. If empty:
+"_No per-phase task lists found in $TASKS_DIR for branch $BRANCH._"]
 ```
 
 **Cognitive load management:**
